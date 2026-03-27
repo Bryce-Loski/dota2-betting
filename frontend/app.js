@@ -1,5 +1,8 @@
 // 全局变量
-const API_BASE = 'http://localhost:5001/api';
+// 自动检测环境：生产环境使用当前域名，开发环境使用 localhost
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:5001/api'
+    : `${window.location.origin}/api`;
 let currentUser = null;
 let currentMatchId = null;
 let matches = [];
