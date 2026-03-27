@@ -2,7 +2,8 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'dota2_betting.db')
+# 数据库路径 - FC 环境中使用 /tmp 目录
+DB_PATH = os.environ.get('DB_PATH', os.path.join(os.path.dirname(__file__), 'dota2_betting.db'))
 
 def get_db_connection():
     """获取数据库连接"""

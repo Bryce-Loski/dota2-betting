@@ -34,11 +34,11 @@ cd backend
 python app.py
 ```
 
-后端服务将在 http://localhost:5000 运行
+后端服务将在 http://localhost:5001 运行
 
 ### 3. 访问网站
 
-打开浏览器访问 http://localhost:5000
+打开浏览器访问 http://localhost:5001
 
 ## 默认用户
 

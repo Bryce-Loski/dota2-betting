@@ -2,11 +2,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 import sys
-
-sys.path.append(os.path.dirname(__file__))
-
-from database import get_db_connection, init_db, init_user_balances
-from user_manager import verify_user, change_password, get_all_usernames, user_exists
+import sqlite3
 
 # 获取当前文件所在目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,17 +11,102 @@ app = Flask(__name__, static_folder=os.path.join(current_dir, 'frontend'))
 CORS(app, supports_credentials=True)
 app.secret_key = 'dota2_betting_secret_key'
 
-# 初始化数据库（函数计算环境下使用 /tmp 目录）
-import database
-database.DB_PATH = '/tmp/dota2_betting.db'
-init_db()
-init_user_balances(get_all_usernames())
+# 数据库路径 - FC 环境中使用 /tmp 目录
+DB_PATH = '/tmp/dota2_betting.db'
+USERS_FILE = os.path.join(current_dir, 'static', 'users.txt')
 
-# ==================== 用户认证API ====================
+def get_db_connection():
+    """获取数据库连接"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    """初始化数据库表"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            creator TEXT NOT NULL,
+            team_a TEXT NOT NULL,
+            team_b TEXT NOT NULL,
+            match_type TEXT NOT NULL,
+            creator_choice TEXT NOT NULL,
+            odds REAL NOT NULL,
+            max_bet REAL NOT NULL,
+            status TEXT DEFAULT 'open',
+            winner TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            closed_at TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            team TEXT NOT NULL,
+            amount REAL NOT NULL,
+            odds REAL NOT NULL,
+            result TEXT,
+            profit REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (match_id) REFERENCES matches (id)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_balances (
+            username TEXT PRIMARY KEY,
+            balance REAL DEFAULT 0
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def load_users():
+    """从txt文件加载用户列表"""
+    users = {}
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and ',' in line:
+                    parts = line.split(',')
+                    if len(parts) >= 2:
+                        users[parts[0]] = parts[1]
+    return users
+
+def get_all_usernames():
+    """获取所有用户名列表"""
+    return list(load_users().keys())
+
+def init_user_balances(usernames):
+    """初始化用户余额"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    for username in usernames:
+        cursor.execute('INSERT OR IGNORE INTO user_balances (username, balance) VALUES (?, 0)', (username,))
+    conn.commit()
+    conn.close()
+
+# 初始化
+try:
+    init_db()
+    init_user_balances(get_all_usernames())
+except Exception as e:
+    print(f"Init error: {e}")
+
+@app.route('/api/health')
+def health():
+    return jsonify({'status': 'ok'})
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    """用户登录"""
     data = request.json
     username = data.get('username')
     password = data.get('password')
@@ -33,45 +114,24 @@ def login():
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
     
-    if verify_user(username, password):
+    users = load_users()
+    if username in users and users[username] == password:
         return jsonify({'success': True, 'username': username})
-    else:
-        return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+    return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
 
-@app.route('/api/change_password', methods=['POST'])
-def change_pwd():
-    """修改密码"""
-    data = request.json
-    username = data.get('username')
-    old_password = data.get('old_password')
-    new_password = data.get('new_password')
-    
-    if not all([username, old_password, new_password]):
-        return jsonify({'success': False, 'message': '请填写所有字段'}), 400
-    
-    if change_password(username, old_password, new_password):
-        return jsonify({'success': True, 'message': '密码修改成功'})
-    else:
-        return jsonify({'success': False, 'message': '原密码错误'}), 400
-
-@app.route('/api/balance/<username>', methods=['GET'])
+@app.route('/api/balance/<username>')
 def get_balance(username):
-    """获取用户余额"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('SELECT balance FROM user_balances WHERE username = ?', (username,))
     result = cursor.fetchone()
     conn.close()
-    
     if result:
         return jsonify({'success': True, 'balance': result['balance']})
     return jsonify({'success': False, 'message': '用户不存在'}), 404
 
-# ==================== 比赛管理API ====================
-
-@app.route('/api/matches', methods=['GET'])
+@app.route('/api/matches')
 def get_matches():
-    """获取所有比赛列表"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -89,41 +149,24 @@ def get_matches():
 
 @app.route('/api/matches', methods=['POST'])
 def create_match():
-    """创建比赛"""
     data = request.json
-    creator = data.get('creator')
-    team_a = data.get('team_a')
-    team_b = data.get('team_b')
-    match_type = data.get('match_type')
-    creator_choice = data.get('creator_choice')
-    odds = float(data.get('odds', 1.0))
-    max_bet = float(data.get('max_bet', 100))
-    
-    if not all([creator, team_a, team_b, match_type, creator_choice]):
-        return jsonify({'success': False, 'message': '请填写所有必填字段'}), 400
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO matches (creator, team_a, team_b, match_type, creator_choice, odds, max_bet)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (creator, team_a, team_b, match_type, creator_choice, odds, max_bet))
+    ''', (data['creator'], data['team_a'], data['team_b'], data['match_type'], 
+          data['creator_choice'], data['odds'], data['max_bet']))
     conn.commit()
     match_id = cursor.lastrowid
     conn.close()
-    
     return jsonify({'success': True, 'message': '比赛创建成功', 'match_id': match_id})
 
 @app.route('/api/matches/<int:match_id>/close', methods=['POST'])
 def close_match(match_id):
-    """封盘比赛"""
     data = request.json
-    username = data.get('username')
-    
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # 检查是否是创建者
     cursor.execute('SELECT creator, status FROM matches WHERE id = ?', (match_id,))
     match = cursor.fetchone()
     
@@ -131,172 +174,82 @@ def close_match(match_id):
         conn.close()
         return jsonify({'success': False, 'message': '比赛不存在'}), 404
     
-    if match['creator'] != username:
+    if match['creator'] != data['username']:
         conn.close()
         return jsonify({'success': False, 'message': '只有创建者可以封盘'}), 403
     
-    if match['status'] != 'open':
-        conn.close()
-        return jsonify({'success': False, 'message': '比赛已经封盘或已结算'}), 400
-    
-    cursor.execute('''
-        UPDATE matches SET status = 'closed', closed_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    ''', (match_id,))
+    cursor.execute('UPDATE matches SET status = ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?',
+                   ('closed', match_id))
     conn.commit()
     conn.close()
-    
     return jsonify({'success': True, 'message': '比赛已封盘'})
 
 @app.route('/api/matches/<int:match_id>/settle', methods=['POST'])
 def settle_match(match_id):
-    """结算比赛"""
     data = request.json
-    username = data.get('username')
-    winner = data.get('winner')
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 检查是否是创建者
     cursor.execute('SELECT * FROM matches WHERE id = ?', (match_id,))
     match = cursor.fetchone()
     
-    if not match:
+    if not match or match['creator'] != data['username']:
         conn.close()
-        return jsonify({'success': False, 'message': '比赛不存在'}), 404
+        return jsonify({'success': False, 'message': '无权限'}), 403
     
-    if match['creator'] != username:
-        conn.close()
-        return jsonify({'success': False, 'message': '只有创建者可以结算'}), 403
-    
-    if match['status'] == 'settled':
-        conn.close()
-        return jsonify({'success': False, 'message': '比赛已经结算'}), 400
-    
-    # 获取所有下注
     cursor.execute('SELECT * FROM bets WHERE match_id = ?', (match_id,))
     bets = cursor.fetchall()
     
-    # 结算每个下注
     for bet in bets:
-        bet_amount = bet['amount']
-        bet_odds = bet['odds']
-        bet_team = bet['team']
-        bet_user = bet['username']
-        
-        if bet_team == winner:
-            # 赢了
-            profit = bet_amount * (bet_odds - 1)
-            result = 'win'
-            # 返还本金+盈利
-            cursor.execute('''
-                UPDATE user_balances 
-                SET balance = balance + ? 
-                WHERE username = ?
-            ''', (bet_amount + profit, bet_user))
+        if bet['team'] == data['winner']:
+            profit = bet['amount'] * (bet['odds'] - 1)
+            cursor.execute('UPDATE user_balances SET balance = balance + ? WHERE username = ?',
+                          (bet['amount'] + profit, bet['username']))
+            cursor.execute('UPDATE bets SET result = ?, profit = ? WHERE id = ?',
+                          ('win', profit, bet['id']))
         else:
-            # 输了
-            profit = -bet_amount
-            result = 'loss'
-        
-        cursor.execute('''
-            UPDATE bets SET result = ?, profit = ? WHERE id = ?
-        ''', (result, profit, bet['id']))
+            cursor.execute('UPDATE bets SET result = ?, profit = ? WHERE id = ?',
+                          ('loss', -bet['amount'], bet['id']))
     
-    # 更新比赛状态
-    cursor.execute('''
-        UPDATE matches SET status = 'settled', winner = ? WHERE id = ?
-    ''', (winner, match_id))
-    
+    cursor.execute('UPDATE matches SET status = ?, winner = ? WHERE id = ?',
+                   ('settled', data['winner'], match_id))
     conn.commit()
     conn.close()
-    
     return jsonify({'success': True, 'message': '比赛已结算'})
-
-# ==================== 下注API ====================
-
-@app.route('/api/matches/<int:match_id>/bets', methods=['GET'])
-def get_match_bets(match_id):
-    """获取比赛的投注情况"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT b.*, m.creator, m.team_a, m.team_b, m.creator_choice
-        FROM bets b
-        JOIN matches m ON b.match_id = m.id
-        WHERE b.match_id = ?
-    ''', (match_id,))
-    bets = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return jsonify({'success': True, 'bets': bets})
 
 @app.route('/api/bets', methods=['POST'])
 def place_bet():
-    """下注"""
     data = request.json
-    match_id = data.get('match_id')
-    username = data.get('username')
-    team = data.get('team')
-    amount = float(data.get('amount', 0))
-    
-    if not all([match_id, username, team]) or amount <= 0:
-        return jsonify({'success': False, 'message': '请填写所有必填字段'}), 400
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 检查比赛状态
-    cursor.execute('SELECT * FROM matches WHERE id = ?', (match_id,))
+    cursor.execute('SELECT status, odds, max_bet FROM matches WHERE id = ?', (data['match_id'],))
     match = cursor.fetchone()
     
-    if not match:
+    if not match or match['status'] != 'open':
         conn.close()
-        return jsonify({'success': False, 'message': '比赛不存在'}), 404
+        return jsonify({'success': False, 'message': '比赛已封盘'}), 400
     
-    if match['status'] != 'open':
-        conn.close()
-        return jsonify({'success': False, 'message': '比赛已封盘，无法下注'}), 400
-    
-    # 检查用户余额
-    cursor.execute('SELECT balance FROM user_balances WHERE username = ?', (username,))
+    cursor.execute('SELECT balance FROM user_balances WHERE username = ?', (data['username'],))
     user = cursor.fetchone()
     
-    if not user or user['balance'] < amount:
+    if not user or user['balance'] < data['amount']:
         conn.close()
         return jsonify({'success': False, 'message': '余额不足'}), 400
     
-    # 检查是否超过最大下注额
-    cursor.execute('''
-        SELECT COALESCE(SUM(amount), 0) as total_bet 
-        FROM bets 
-        WHERE match_id = ? AND username = ?
-    ''', (match_id, username))
-    total_bet = cursor.fetchone()['total_bet']
-    
-    if total_bet + amount > match['max_bet']:
-        conn.close()
-        return jsonify({'success': False, 'message': f'超过最大下注限额 {match["max_bet"]}'}), 400
-    
-    # 扣除余额
-    cursor.execute('''
-        UPDATE user_balances SET balance = balance - ? WHERE username = ?
-    ''', (amount, username))
-    
-    # 记录下注
+    cursor.execute('UPDATE user_balances SET balance = balance - ? WHERE username = ?',
+                   (data['amount'], data['username']))
     cursor.execute('''
         INSERT INTO bets (match_id, username, team, amount, odds)
         VALUES (?, ?, ?, ?, ?)
-    ''', (match_id, username, team, amount, match['odds']))
+    ''', (data['match_id'], data['username'], data['team'], data['amount'], match['odds']))
     
     conn.commit()
     conn.close()
-    
     return jsonify({'success': True, 'message': '下注成功'})
 
-@app.route('/api/users/<username>/bets', methods=['GET'])
+@app.route('/api/users/<username>/bets')
 def get_user_bets(username):
-    """获取用户的所有下注"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -310,7 +263,18 @@ def get_user_bets(username):
     conn.close()
     return jsonify({'success': True, 'bets': bets})
 
-# ==================== 静态文件服务 ====================
+@app.route('/api/change_password', methods=['POST'])
+def change_password():
+    data = request.json
+    users = load_users()
+    
+    if data['username'] in users and users[data['username']] == data['old_password']:
+        users[data['username']] = data['new_password']
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+            for u, p in users.items():
+                f.write(f"{u},{p}\n")
+        return jsonify({'success': True, 'message': '密码修改成功'})
+    return jsonify({'success': False, 'message': '原密码错误'}), 400
 
 @app.route('/')
 def index():
@@ -321,4 +285,6 @@ def serve_static(path):
     return send_from_directory(os.path.join(current_dir, 'frontend'), path)
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    import os
+    port = int(os.environ.get('PORT', 5001))
+    app.run(debug=False, host='0.0.0.0', port=port)

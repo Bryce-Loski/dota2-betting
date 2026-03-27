@@ -12,7 +12,7 @@ resources:
       region: ${vars.region}
       functionName: dota2-betting
       runtime: python3.9
-      code: ./code
+      code: ./function.zip
       handler: index.handler
       memorySize: 512
       timeout: 60
