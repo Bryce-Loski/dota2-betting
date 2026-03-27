@@ -1,0 +1,33 @@
+edition: 3.0.0
+name: dota2-betting
+access: default
+
+vars:
+  region: cn-hangzhou
+
+resources:
+  dota2-betting:
+    component: fc3
+    props:
+      region: ${vars.region}
+      functionName: dota2-betting
+      runtime: python3.9
+      code: ./code
+      handler: index.handler
+      memorySize: 512
+      timeout: 60
+      environmentVariables:
+        PYTHONPATH: /opt/python
+      layers:
+        - acs:fc:${vars.region}:official:layers/Python3-Flask/versions/2
+      triggers:
+        - triggerName: httpTrigger
+          triggerType: http
+          triggerConfig:
+            authType: anonymous
+            methods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
