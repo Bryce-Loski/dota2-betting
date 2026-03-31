@@ -44,7 +44,7 @@ function initEventListeners() {
     document.getElementById('match-team-a').addEventListener('input', updateCreatorChoice);
     document.getElementById('match-team-b').addEventListener('input', updateCreatorChoice);
     
-    // 监听下注金额变化，计算预计收益
+    // 监听下注Dota豆变化，计算预计收益
     document.getElementById('bet-amount').addEventListener('input', updateEstimatedProfit);
 }
 
@@ -96,9 +96,9 @@ function updateEstimatedProfit() {
     const match = matches.find(m => m.id === currentMatchId);
     if (match && amount > 0) {
         const profit = amount * (match.odds - 1);
-        document.getElementById('estimated-profit').textContent = `¥${profit.toFixed(2)}`;
+        document.getElementById('estimated-profit').textContent = `${profit.toFixed(2)} Dota豆`;
     } else {
-        document.getElementById('estimated-profit').textContent = '¥0';
+        document.getElementById('estimated-profit').textContent = '0 Dota豆';
     }
 }
 
@@ -162,7 +162,7 @@ async function showMainPage() {
     await loadMatches();
 }
 
-// 更新余额
+// 更新Dota豆
 async function updateBalance() {
     try {
         const response = await fetch(`${API_BASE}/balance/${currentUser}`);
@@ -170,10 +170,10 @@ async function updateBalance() {
         
         if (data.success) {
             document.getElementById('user-balance').innerHTML = 
-                `<i class="fas fa-coins"></i> ¥${data.balance.toFixed(2)}`;
+                `<i class="fas fa-coins"></i> ${data.balance.toFixed(2)} Dota豆`;
         }
     } catch (error) {
-        console.error('获取余额失败:', error);
+        console.error('获取Dota豆失败:', error);
     }
 }
 
@@ -272,14 +272,14 @@ function renderMatches() {
                     <div class="team">
                         <div class="team-name">${match.team_a}</div>
                         <div class="team-bet-amount">
-                            <i class="fas fa-coins"></i> ¥${(match.team_a_total || 0).toFixed(2)}
+                            <i class="fas fa-coins"></i> ${(match.team_a_total || 0).toFixed(2)} Dota豆
                         </div>
                     </div>
                     <div class="vs">VS</div>
                     <div class="team">
                         <div class="team-name">${match.team_b}</div>
                         <div class="team-bet-amount">
-                            <i class="fas fa-coins"></i> ¥${(match.team_b_total || 0).toFixed(2)}
+                            <i class="fas fa-coins"></i> ${(match.team_b_total || 0).toFixed(2)} Dota豆
                         </div>
                     </div>
                 </div>
@@ -288,8 +288,8 @@ function renderMatches() {
                         <div class="progress-fill" style="width: ${progressPercent}%"></div>
                     </div>
                     <div class="progress-info">
-                        <span><i class="fas fa-chart-bar"></i> 已下注: ¥${totalBet.toFixed(2)}</span>
-                        <span>上限: ¥${match.max_bet}</span>
+                        <span><i class="fas fa-chart-bar"></i> 已下注: ${totalBet.toFixed(2)} Dota豆</span>
+                        <span>上限: ${match.max_bet} Dota豆</span>
                     </div>
                 </div>
                 <div class="match-info">
@@ -395,7 +395,7 @@ function showBetModal(matchId) {
     select.innerHTML = `<option value="${otherTeam}">${otherTeam}</option>`;
     
     document.getElementById('bet-amount').value = '';
-    document.getElementById('estimated-profit').textContent = '¥0';
+    document.getElementById('estimated-profit').textContent = '0 Dota豆';
     
     document.getElementById('place-bet-modal').classList.remove('hidden');
 }
@@ -591,8 +591,8 @@ function renderMyBets(bets) {
                         <div class="bet-detail-value">${bet.team}</div>
                     </div>
                     <div class="bet-detail">
-                        <div class="bet-detail-label">下注金额</div>
-                        <div class="bet-detail-value">¥${bet.amount.toFixed(2)}</div>
+                        <div class="bet-detail-label">下注Dota豆</div>
+                        <div class="bet-detail-value">${bet.amount.toFixed(2)} Dota豆</div>
                     </div>
                     <div class="bet-detail">
                         <div class="bet-detail-label">赔率</div>
@@ -602,7 +602,7 @@ function renderMyBets(bets) {
                     <div class="bet-detail">
                         <div class="bet-detail-label">盈亏</div>
                         <div class="bet-detail-value ${profitClass}">
-                            ${bet.profit > 0 ? '+' : ''}¥${bet.profit.toFixed(2)}
+                            ${bet.profit > 0 ? '+' : ''}${bet.profit.toFixed(2)} Dota豆
                         </div>
                     </div>
                     ` : ''}
